@@ -1,4 +1,6 @@
 import bpy
+import bpy.props
+import bpy.utils
 import math
 from mathutils.kdtree import KDTree
 from functools import total_ordering
@@ -57,7 +59,6 @@ class SampleEliminator:
     def eliminate_one(self):
         item = heapq.heappop(self.heap)
         index = item.index
-        print("eliminating", index)
         location = self.locations[index]
         for location2, index2, d in self.tree.find_range(location, 2 * self.rmax):
             item2 = self.heap_items[index2]
@@ -66,9 +67,6 @@ class SampleEliminator:
         self.current_samples -= 1
 
     def eliminate(self):
-        print("elimiate")
-        print(self.current_samples)
-        print(self.target_samples)
         while self.current_samples > self.target_samples:
             self.eliminate_one()
 
@@ -96,6 +94,24 @@ class BlueNoiseParticles(bpy.types.Operator):
     bl_label = "Blue Noise Particles"
     bl_options = {'REGISTER', 'UNDO', 'PRESET'}
 
+    emit_from_types = [("VERT","Verts","Emit from vertices"),
+                       ("FACE","Faces","Emit from faces"),
+                       ("VOLUME", "Volume", "Emit from volume")]
+    emit_from = bpy.props.EnumProperty(items=emit_from_types,
+                                       name="Emit From",
+                                       description="Controls where particles are generated",
+                                       default="FACE")
+
+    quality_types = [("2", "Low", ""),
+                       ("5", "Medium", ""),
+                       ("10", "High", "")]
+    quality = bpy.props.EnumProperty(items=quality_types,
+                                     name="Quality",
+                                     description="Controls how much oversampling is done",
+                                     default="2")
+
+
+
     @classmethod
     def poll(cls, context):
         ob = context.active_object
@@ -104,32 +120,59 @@ class BlueNoiseParticles(bpy.types.Operator):
                 (ob.type == "MESH") and
                 (context.mode == "OBJECT"))
 
-    def execute(self, context):
+    def invoke(self, context, event):
         # Create the new object
         obj = context.active_object  # type: bpy.types.Object
 
         bpy.ops.object.particle_system_add()
         psys = obj.particle_systems[-1]  # type: bpy.types.ParticleSystem
         pset = psys.settings
-        #pset.count = 10000
+        pset.count = 2000
+        # The particle tricks we're doing only seem to work if there
+        # is a cache involved.
+        #if pset.physics_type == "NO":
+        #    pset.physics_type = 'NEWTON'
+
+        self.draw_method = pset.draw_method
+        # Hide particles while recomputing,
+        # as it looks like the addon has done the wrong thing
+        pset.draw_method = 'NONE'
         pset.show_unborn = True
+        psys.settings = pset
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+
+    def modal(self, context, event):
+        print(event)
+        obj = context.active_object  # type: bpy.types.Object
+        psys = obj.particle_systems[-1]  # type: bpy.types.ParticleSystem
+        pset = psys.settings
 
         particles = psys.particles
 
         locations = dict((index, particle.location) for (index, particle) in particles.items())
-        se = SampleEliminator(locations, 500)
+        print()
+        se = SampleEliminator(locations, 1000)
+        print("eliminating",len(locations),"->",1000)
         se.eliminate()
+        print("done")
 
         alive_indices = set(se.get_indices())
-        print(alive_indices)
+        print(len(alive_indices))
 
         for index, particle in particles.items():
             alive = index in alive_indices
             particle.alive_state = 'ALIVE' if alive else 'DEAD'
             if not alive:
-                particle.location = [0,0,0]
+                particle.location = [.01, 0, 0]
+
+        # Restore the original draw method
+        # (also force a redraw, blender can otherwise sho
+        pset.draw_method = self.draw_method
 
         return {'FINISHED'}
+
+#for p in C.object.particle_systems[0].particles: p.location = [0,0,0]
 
 
 def menu_func(self, context):

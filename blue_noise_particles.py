@@ -12,10 +12,10 @@ bl_info = {
     "author": "Adam Newgas",
     "version": (0, 0, 1),
     "blender": (2, 78, 0),
-    "location": "",
+    "location": "View3D > Add > Mesh > Blue Noise Particles",
     "warning": "",
-    "wiki_url": "",
-    "category": ""}
+    "wiki_url": "https://github.com/BorisTheBrave/blue-noise-particles/wiki",
+    "category": "Add Mesh"}
 
 
 class SampleEliminator:
@@ -219,11 +219,11 @@ def menu_func(self, context):
 
 def register():
     bpy.utils.register_module(__name__)
-    bpy.types.INFO_MT_curve_add.append(menu_func)
+    bpy.types.INFO_MT_mesh_add.append(menu_func)
 
 
 def unregister():
-    bpy.types.INFO_MT_curve_add.remove(menu_func)
+    bpy.types.INFO_MT_mesh_add.remove(menu_func)
     bpy.utils.unregister_module(__name__)
 
 if __name__ == "__main__":

@@ -63,6 +63,7 @@ class SampleEliminator:
         for location2, index2, d in self.tree.find_range(location, 2 * self.rmax):
             item2 = self.heap_items[index2]
             item2.weight -= self.w(d)
+        # A better heap implementation would have an update_key operation
         heapq.heapify(self.heap)
         self.current_samples -= 1
 
@@ -92,25 +93,28 @@ class SampleEliminator:
 class BlueNoiseParticles(bpy.types.Operator):
     bl_idname = "object.blue_noise_particles_operator"
     bl_label = "Blue Noise Particles"
-    bl_options = {'REGISTER', 'UNDO', 'PRESET'}
+    bl_options = {'REGISTER', 'UNDO'}
 
-    emit_from_types = [("VERT","Verts","Emit from vertices"),
-                       ("FACE","Faces","Emit from faces"),
+    emit_from_types = [("VERT", "Verts", "Emit from vertices"),
+                       ("FACE", "Faces", "Emit from faces"),
                        ("VOLUME", "Volume", "Emit from volume")]
     emit_from = bpy.props.EnumProperty(items=emit_from_types,
                                        name="Emit From",
                                        description="Controls where particles are generated",
                                        default="FACE")
 
-    quality_types = [("2", "Low", ""),
-                       ("5", "Medium", ""),
-                       ("10", "High", "")]
+    quality_types = [("1.5", "Low", ""),
+                       ("2", "Medium", ""),
+                       ("5", "High", "")]
     quality = bpy.props.EnumProperty(items=quality_types,
                                      name="Quality",
                                      description="Controls how much oversampling is done",
                                      default="2")
 
-
+    count = bpy.props.IntProperty(name="Count",
+                                  description="Number of particles to emit",
+                                  default=1000,
+                                  min=0)
 
     @classmethod
     def poll(cls, context):
@@ -120,60 +124,57 @@ class BlueNoiseParticles(bpy.types.Operator):
                 (ob.type == "MESH") and
                 (context.mode == "OBJECT"))
 
-    def invoke(self, context, event):
-        # Create the new object
+    def execute(self, context):
         obj = context.active_object  # type: bpy.types.Object
+        scene = context.scene
 
+        initial_particle_count = self.count * float(self.quality)
+
+        # Create a new particle system
         bpy.ops.object.particle_system_add()
         psys = obj.particle_systems[-1]  # type: bpy.types.ParticleSystem
         pset = psys.settings
-        pset.count = 2000
-        # The particle tricks we're doing only seem to work if there
-        # is a cache involved.
-        #if pset.physics_type == "NO":
-        #    pset.physics_type = 'NEWTON'
+        pset.count = initial_particle_count
+        pset.emit_from = self.emit_from
 
-        self.draw_method = pset.draw_method
-        # Hide particles while recomputing,
-        # as it looks like the addon has done the wrong thing
-        pset.draw_method = 'NONE'
-        pset.show_unborn = True
-        psys.settings = pset
-        context.window_manager.modal_handler_add(self)
-        return {'RUNNING_MODAL'}
+        # Force a scene update (generates particle loations)
+        scene.update()
 
-    def modal(self, context, event):
-        print(event)
-        obj = context.active_object  # type: bpy.types.Object
-        psys = obj.particle_systems[-1]  # type: bpy.types.ParticleSystem
-        pset = psys.settings
-
+        # Run sample elimination
         particles = psys.particles
-
         locations = dict((index, particle.location) for (index, particle) in particles.items())
-        print()
-        se = SampleEliminator(locations, 1000)
-        print("eliminating",len(locations),"->",1000)
+        se = SampleEliminator(locations, self.count)
         se.eliminate()
-        print("done")
+        alive_indices = se.get_indices()
+        alive_locations = [locations[i] for i in alive_indices]
 
-        alive_indices = set(se.get_indices())
-        print(len(alive_indices))
+        # Delete particle system
+        bpy.ops.object.particle_system_remove()
 
-        for index, particle in particles.items():
-            alive = index in alive_indices
-            particle.alive_state = 'ALIVE' if alive else 'DEAD'
-            if not alive:
-                particle.location = [.01, 0, 0]
+        # Create a new object, with vertices according the the alive locations
+        me = bpy.data.meshes.new(obj.name + " ParticleMesh")
+        ob = bpy.data.objects.new(obj.name + " Particles", me)
+        scene.objects.link(ob)
+        me.from_pydata(alive_locations, [], [])
+        me.update()
 
-        # Restore the original draw method
-        # (also force a redraw, blender can otherwise sho
-        pset.draw_method = self.draw_method
+        # Select new object
+        scene.objects.active = ob
+        obj.select = False
+        ob.select = True
+
+        # Add a particle system to the new object
+        bpy.ops.object.particle_system_add()
+        psys = ob.particle_systems[-1]  # type: bpy.types.ParticleSystem
+        pset = psys.settings
+        pset.count = self.count
+        pset.emit_from = 'VERT'
+        pset.use_emit_random = False
+        pset.frame_start = 0
+        pset.frame_end = 0
+        pset.use_render_emitter = False
 
         return {'FINISHED'}
-
-#for p in C.object.particle_systems[0].particles: p.location = [0,0,0]
-
 
 def menu_func(self, context):
     self.layout.operator(BlueNoiseParticles.bl_idname,

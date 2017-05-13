@@ -162,6 +162,8 @@ class BlueNoiseParticles(bpy.types.Operator):
         pset = psys.settings
         pset.count = initial_particle_count
         pset.emit_from = self.emit_from
+        pset.distribution = 'RAND'
+        pset.use_even_distribution = True
 
         # Force a scene update (generates particle loations)
         scene.update()

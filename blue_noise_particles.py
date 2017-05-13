@@ -208,6 +208,9 @@ class BlueNoiseParticles(bpy.types.Operator):
 
         return {'FINISHED'}
 
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self)
+
 def menu_func(self, context):
     self.layout.operator(BlueNoiseParticles.bl_idname,
                          text="Blue Noise Particles",

@@ -30,7 +30,7 @@ class HeapItem:
 
 
 class SampleEliminator:
-    def __init__(self, locations, target_samples, is_volume, mesh_area=None):
+    def __init__(self, locations, target_samples, is_volume, mesh_area):
         self.locations = locations
 
         # Setup a KD Tree of all lcations
@@ -50,13 +50,23 @@ class SampleEliminator:
         bounds = [max(p[i] for p in locations.values()) - min(p[i] for p in locations.values())
                   for i in range(3)]
 
+        # Volume based constraint
         A = bounds[0] * bounds[1] * bounds[2]
-        self.rmax = (A / 4 / math.sqrt(2) / N) ** (1 / 3) # Volume based constraint
-        if not is_volume and mesh_area is not None:
+        rmax3 = (A / 4 / math.sqrt(2) / N) ** (1 / 3)
+
+        # Volume estimate only valid for reasonably squarish things
+        is_thin = rmax3 <= min(bounds)
+        if is_thin:
+            rmax3 = float('inf')
+
+        if is_thin or not is_volume:
             # If we are constrained to 2d surface, then it is possible to
             # get a better bound for rmax. Depends on the mesh geometry.
             rmax2 = math.sqrt(mesh_area / 2 / math.sqrt(3) / N)
-            self.rmax = min(self.rmax, rmax2)
+        else:
+            rmax2 = float('inf')
+
+        self.rmax = min(rmax2, rmax3)
 
         # Choose rmin via heuristic
         gamma = 1.5
@@ -99,11 +109,9 @@ class SampleEliminator:
                          (li[1] - lj[1]) ** 2 +
                          (li[2] - lj[2]) ** 2)
 
-    def adj_d(self, d):
-        return min(d, 2 * self.rmax)
-
     def w(self, d):
-        return (1 - self.adj_d(d) / 2 / self.rmax) ** self.alpha
+        adj_d = min(d, 2 * self.rmax)
+        return (1 - adj_d / 2 / self.rmax) ** self.alpha
 
 
 def get_mesh_area(obj):

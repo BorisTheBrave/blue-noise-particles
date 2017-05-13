@@ -4,7 +4,9 @@ import bpy
 import bpy.props
 import bpy.utils
 import bmesh
-from mathutils.kdtree import KDTree
+import mathutils
+import mathutils.geometry
+import mathutils.kdtree
 
 bl_info = {
     "name": "Blue Noise Particles",
@@ -19,12 +21,12 @@ bl_info = {
 
 
 class SampleEliminator:
-    def __init__(self, locations, target_samples, is_volume, mesh_area):
+    def __init__(self, locations, densities, target_samples, is_volume, mesh_area):
         self.locations = locations
 
         # Setup a KD Tree of all lcations
-        self.tree = KDTree(len(locations))
-        for index, location in locations.items():
+        self.tree = mathutils.kdtree.KDTree(len(locations))
+        for index, location in enumerate(locations):
             self.tree.insert(location, index)
         self.tree.balance()
 
@@ -36,7 +38,7 @@ class SampleEliminator:
         N = self.target_samples
 
         # Choose rmax via heuristic
-        bounds = [max(p[i] for p in locations.values()) - min(p[i] for p in locations.values())
+        bounds = [max(p[i] for p in locations) - min(p[i] for p in locations)
                   for i in range(3)]
 
         # Volume based constraint
@@ -57,6 +59,15 @@ class SampleEliminator:
 
         self.rmax = min(rmax2, rmax3)
 
+        if densities is not None:
+            # Need to be a bit more conservative if the faces are imbalanced.
+            # This could still go wrong with extreme vertex weights...
+            self.rmax *= 3
+            dmax = max(densities)
+            self.densities = [d / dmax for d in densities]
+        else:
+            self.densities = [1] * len(locations)
+
         # Choose rmin via heuristic
         gamma = 1.5
         beta = 0.65
@@ -65,10 +76,10 @@ class SampleEliminator:
         # Build initial heap
         self.heap = fibonacci_heap_mod.Fibonacci_heap()
         self.heap_items = {}
-        for index, location in locations.items():
+        for index, location in enumerate(locations):
             tot_weight = 0
             for location2, index2, d in self.tree.find_range(location, 2 * self.rmax):
-                tot_weight += self.w(d)
+                tot_weight += self.w(d, index, index2)
             item = self.heap.enqueue(index, -tot_weight)
             self.heap_items[index] = item
 
@@ -83,7 +94,7 @@ class SampleEliminator:
         for location2, index2, d in self.tree.find_range(location, 2 * self.rmax):
             item2 = self.heap_items.get(index2)
             if item2:
-                new_weight = item2.get_priority() + self.w(d)
+                new_weight = item2.get_priority() + self.w(d, index2, index)
                 self.heap.delete(item2)
                 item2 = self.heap.enqueue(index2, new_weight)
                 self.heap_items[index2] = item2
@@ -103,7 +114,13 @@ class SampleEliminator:
                          (li[1] - lj[1]) ** 2 +
                          (li[2] - lj[2]) ** 2)
 
-    def w(self, d):
+    def w(self, d, i, j):
+        # This sqrt is important as it ensures our distance scale (a length)
+        # is consistent with the density scale (an area^-1)
+        # If they are not consistent, then the distribution that generated
+        # the points won't be close to what we are eliminating down to
+        # leading to poor quality results.
+        d *= math.sqrt(self.densities[i])
         adj_d = min(d, 2 * self.rmax)
         return (1 - adj_d / 2 / self.rmax) ** self.alpha
 
@@ -112,8 +129,111 @@ def get_mesh_area(obj):
     bm = bmesh.new()
     bm.from_mesh(obj.data)
     area = sum(f.calc_area() for f in bm.faces)
+    bm.free()
     return area
 
+def particle_distribute(obj, particle_count, emit_from, scene):
+    # Uses blender's built in particle system.
+    # Sadly doesn't work with density weighting as it is not possible
+    # to extract vertex densities
+    bpy.ops.object.particle_system_add()
+    psys = obj.particle_systems[-1]  # type: bpy.types.ParticleSystem
+    pset = psys.settings
+    pset.count = particle_count
+    pset.emit_from = emit_from
+    pset.distribution = 'RAND'
+    pset.use_even_distribution = True
+
+    # Force a scene update (generates particle loations)
+    scene.update()
+
+    # Extract locations
+    particles = psys.particles
+    locations = [particle.location for (index, particle) in particles.items()]
+
+    # Delete particle system
+    bpy.ops.object.particle_system_remove()
+
+    return locations, None
+
+V1 = mathutils.Vector([0, 0, 0])
+V2 = mathutils.Vector([0, 0, 1])
+V3 = mathutils.Vector([0, 1, 0])
+
+
+def weighted_particle_distribute(obj, particle_count, weight_group):
+    # Distributes points similarly to blender's built in particle system
+    # for emit_from=FACES, random type=RAND, even_distribution=True
+    # and with the given vertex weight group for density.
+    # It returns the locations of the particles, and the density of the
+    # area that particle was found
+    import numpy as np
+    np.random.seed(0)
+
+    # This is a rough port of what the C code does for random particles
+    # See particle_distribute.c, distribute_from_faces_exec
+
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    # TODO: The original code handles quads.
+    bmesh.ops.triangulate(bm, faces=bm.faces)
+    bm.faces.ensure_lookup_table()
+    areas = np.array([f.calc_area() for f in bm.faces])
+
+    # Compute face relative densities
+    group_index = obj.vertex_groups[weight_group].index
+    layer = bm.verts.layers.deform[0]
+    face_densities = np.zeros(len(bm.faces))
+    for face in bm.faces:
+        w = np.mean([v[layer].get(group_index, 0) for v in face.verts])
+        face_densities[face.index] = w
+    print(face_densities)
+    print(areas)
+    areas *= face_densities
+
+
+    # Precompute distribution amongst faces
+    careas = areas.cumsum()
+    total_area = careas[-1]
+
+    # Randomly pick which face each particle goes to
+    rand_index = np.random.uniform(0, total_area, particle_count)
+    face_indices = np.searchsorted(careas, rand_index)
+
+    # Randomly pick where in each face the particle is
+    rand_u = np.random.uniform(size=particle_count)
+    rand_v = np.random.uniform(size=particle_count)
+    rand_sum = rand_u + rand_v
+
+    V = mathutils.Vector
+    locations = []
+    densities = []
+    for i in range(particle_count):
+        face_index = face_indices[i]
+        face = bm.faces[face_index]
+        vc = len(face.verts)
+        assert vc == 3
+        u = rand_u[i]
+        v = rand_v[i]
+        if u + v > 1:
+            u = 1 - u
+            v = 1 - v
+        loc = mathutils.geometry.barycentric_transform(
+            V([0, u, v]),
+            V1,
+            V2,
+            V3,
+            face.verts[0].co,
+            face.verts[1].co,
+            face.verts[2].co,
+        )
+        loc = obj.matrix_world * loc
+        locations.append(loc)
+        densities.append(face_densities[face_index])
+
+
+    bm.free()
+    return locations, densities
 
 class BlueNoiseParticles(bpy.types.Operator):
     bl_idname = "object.blue_noise_particles_operator"
@@ -142,6 +262,9 @@ class BlueNoiseParticles(bpy.types.Operator):
                                   default=1000,
                                   min=0)
 
+    vertex_group_density = bpy.props.StringProperty(name="Density",
+                                      description="Vertex group to control density")
+
     @classmethod
     def poll(cls, context):
         ob = context.active_object
@@ -150,39 +273,39 @@ class BlueNoiseParticles(bpy.types.Operator):
                 (ob.type == "MESH") and
                 (context.mode == "OBJECT"))
 
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, "emit_from")
+        layout.prop(self, "quality")
+        layout.prop(self, "count")
+        obj = bpy.data.objects[self.obj_name]
+        layout.prop_search(self, "vertex_group_density", obj, "vertex_groups", text="Density")
+
     def execute(self, context):
         obj = context.active_object  # type: bpy.types.Object
         scene = context.scene
 
-        initial_particle_count = self.count * float(self.quality)
-
-        # Create a new particle system
-        bpy.ops.object.particle_system_add()
-        psys = obj.particle_systems[-1]  # type: bpy.types.ParticleSystem
-        pset = psys.settings
-        pset.count = initial_particle_count
-        pset.emit_from = self.emit_from
-        pset.distribution = 'RAND'
-        pset.use_even_distribution = True
-
-        # Force a scene update (generates particle loations)
-        scene.update()
+        initial_particle_count = int(self.count * float(self.quality))
 
         is_volume = self.emit_from == 'VOLUME'
         mesh_area = None
         if not is_volume:
             mesh_area = get_mesh_area(obj)
 
+        if not self.vertex_group_density:
+            locations, densities = particle_distribute(obj, initial_particle_count, self.emit_from, scene)
+        else:
+            if self.emit_from != "FACE":
+                self.report("Vertex group density only supported when emitting from faces", 'ERROR_INVALID_INPUT')
+                return {"FINISHED"}
+            locations, densities = weighted_particle_distribute(obj, initial_particle_count, self.vertex_group_density)
+
         # Run sample elimination
-        particles = psys.particles
-        locations = dict((index, particle.location) for (index, particle) in particles.items())
-        se = SampleEliminator(locations, self.count, is_volume, mesh_area)
+        se = SampleEliminator(locations, densities, self.count, is_volume, mesh_area)
         se.eliminate()
         alive_indices = se.get_indices()
         alive_locations = [tuple(locations[i]) for i in alive_indices]
 
-        # Delete particle system
-        bpy.ops.object.particle_system_remove()
 
         # Create a new object, with vertices according the the alive locations
         me = bpy.data.meshes.new(obj.name + " ParticleMesh")
@@ -211,6 +334,7 @@ class BlueNoiseParticles(bpy.types.Operator):
         return {'FINISHED'}
 
     def invoke(self, context, event):
+        self.obj_name = context.active_object.name
         return context.window_manager.invoke_props_dialog(self)
 
 def menu_func(self, context):

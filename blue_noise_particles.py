@@ -1,10 +1,11 @@
+import math
+from functools import total_ordering
+import heapq
 import bpy
 import bpy.props
 import bpy.utils
-import math
+import bmesh
 from mathutils.kdtree import KDTree
-from functools import total_ordering
-import heapq
 
 bl_info = {
     "name": "Blue Noise Particles",
@@ -28,21 +29,37 @@ class HeapItem:
         return self.weight > other.weight
 
 class SampleEliminator:
-    def __init__(self, locations, target_samples):
+    def __init__(self, locations, target_samples, is_volume, mesh_area=None):
         self.locations = locations
+
+        # Setup a KD Tree of all lcations
         self.tree = KDTree(len(locations))
         for index, location in locations.items():
             self.tree.insert(location, index)
         self.tree.balance()
-        self.rmax = 0.1  # TODO: Choose this appropriately
+
         self.alpha = 8
         self.target_samples = target_samples
         self.current_samples = len(self.locations)
 
-        gamma = 1.5
-        beta = 0.65
         M = self.current_samples
         N = self.target_samples
+
+        # Choose rmax via heuristic
+        bounds = [max(p[i] for p in locations.values()) - min(p[i] for p in locations.values())
+                  for i in range(3)]
+
+        A = bounds[0] * bounds[1] * bounds[2]
+        self.rmax = (A / 4 / math.sqrt(2) / N) ** (1 / 3) # Volume based constraint
+        if not is_volume and mesh_area is not None:
+            # If we are constrained to 2d surface, then it is possible to
+            # get a better bound for rmax. Depends on the mesh geometry.
+            rmax2 = math.sqrt(mesh_area / 2 / math.sqrt(3) / N)
+            self.rmax = min(self.rmax, rmax2)
+
+        # Choose rmin via heuristic
+        gamma = 1.5
+        beta = 0.65
         self.rmin = self.rmax * (1 - (N / M) ** gamma) * beta
 
         # Build initial heap
@@ -88,7 +105,11 @@ class SampleEliminator:
         return (1 - self.adj_d(d) / 2 / self.rmax) ** self.alpha
 
 
-
+def get_mesh_area(obj):
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    area = sum(f.calc_area() for f in bm.faces)
+    return area
 
 class BlueNoiseParticles(bpy.types.Operator):
     bl_idname = "object.blue_noise_particles_operator"
@@ -140,10 +161,15 @@ class BlueNoiseParticles(bpy.types.Operator):
         # Force a scene update (generates particle loations)
         scene.update()
 
+        is_volume = self.emit_from == 'VOLUME'
+        mesh_area = None
+        if not is_volume:
+            mesh_area = get_mesh_area(obj)
+
         # Run sample elimination
         particles = psys.particles
         locations = dict((index, particle.location) for (index, particle) in particles.items())
-        se = SampleEliminator(locations, self.count)
+        se = SampleEliminator(locations, self.count, is_volume, mesh_area)
         se.eliminate()
         alive_indices = se.get_indices()
         alive_locations = [locations[i] for i in alive_indices]

@@ -1,6 +1,5 @@
 import math
-from functools import total_ordering
-import heapq
+import fibonacci_heap_mod
 import bpy
 import bpy.props
 import bpy.utils
@@ -17,16 +16,6 @@ bl_info = {
     "warning": "",
     "wiki_url": "",
     "category": ""}
-
-
-@total_ordering
-class HeapItem:
-    def __init__(self, weight, index):
-        self.weight = weight
-        self.index = index
-
-    def __lt__(self, other):
-        return self.weight > other.weight
 
 
 class SampleEliminator:
@@ -74,25 +63,30 @@ class SampleEliminator:
         self.rmin = self.rmax * (1 - (N / M) ** gamma) * beta
 
         # Build initial heap
-        self.heap = []
+        self.heap = fibonacci_heap_mod.Fibonacci_heap()
         self.heap_items = {}
         for index, location in locations.items():
             tot_weight = 0
             for location2, index2, d in self.tree.find_range(location, 2 * self.rmax):
                 tot_weight += self.w(d)
-            item = HeapItem(tot_weight, index)
+            item = self.heap.enqueue(index, -tot_weight)
             self.heap_items[index] = item
-            heapq.heappush(self.heap, item)
 
     def eliminate_one(self):
-        item = heapq.heappop(self.heap)
-        index = item.index
+        # Extract highest priority item
+        item = self.heap.dequeue_min()
+        index = item.get_value()
+        del self.heap_items[index]
         location = self.locations[index]
+
+        # Update all adjacent items
         for location2, index2, d in self.tree.find_range(location, 2 * self.rmax):
-            item2 = self.heap_items[index2]
-            item2.weight -= self.w(d)
-        # A better heap implementation would have an update_key operation
-        heapq.heapify(self.heap)
+            item2 = self.heap_items.get(index2)
+            if item2:
+                new_weight = item2.get_priority() + self.w(d)
+                self.heap.delete(item2)
+                item2 = self.heap.enqueue(index2, new_weight)
+                self.heap_items[index2] = item2
         self.current_samples -= 1
 
     def eliminate(self):
@@ -100,7 +94,7 @@ class SampleEliminator:
             self.eliminate_one()
 
     def get_indices(self):
-        return (item.index for item in self.heap)
+        return list(self.heap_items.keys())
 
     def d(self, i, j):
         li = self.locations[i]
@@ -134,9 +128,10 @@ class BlueNoiseParticles(bpy.types.Operator):
                                        description="Controls where particles are generated",
                                        default="FACE")
 
-    quality_types = [("1.5", "Low", ""),
-                       ("2", "Medium", ""),
-                       ("5", "High", "")]
+    quality_types = [("1", "None", ""),
+                     ("1.5", "Low", ""),
+                     ("2", "Medium", ""),
+                     ("5", "High", "")]
     quality = bpy.props.EnumProperty(items=quality_types,
                                      name="Quality",
                                      description="Controls how much oversampling is done",

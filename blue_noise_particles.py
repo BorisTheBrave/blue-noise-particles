@@ -28,6 +28,7 @@ class HeapItem:
     def __lt__(self, other):
         return self.weight > other.weight
 
+
 class SampleEliminator:
     def __init__(self, locations, target_samples, is_volume, mesh_area=None):
         self.locations = locations
@@ -111,6 +112,7 @@ def get_mesh_area(obj):
     area = sum(f.calc_area() for f in bm.faces)
     return area
 
+
 class BlueNoiseParticles(bpy.types.Operator):
     bl_idname = "object.blue_noise_particles_operator"
     bl_label = "Blue Noise Particles"
@@ -172,7 +174,7 @@ class BlueNoiseParticles(bpy.types.Operator):
         se = SampleEliminator(locations, self.count, is_volume, mesh_area)
         se.eliminate()
         alive_indices = se.get_indices()
-        alive_locations = [locations[i] for i in alive_indices]
+        alive_locations = [tuple(locations[i]) for i in alive_indices]
 
         # Delete particle system
         bpy.ops.object.particle_system_remove()
@@ -180,8 +182,8 @@ class BlueNoiseParticles(bpy.types.Operator):
         # Create a new object, with vertices according the the alive locations
         me = bpy.data.meshes.new(obj.name + " ParticleMesh")
         ob = bpy.data.objects.new(obj.name + " Particles", me)
-        scene.objects.link(ob)
         me.from_pydata(alive_locations, [], [])
+        scene.objects.link(ob)
         me.update()
 
         # Select new object
@@ -199,6 +201,7 @@ class BlueNoiseParticles(bpy.types.Operator):
         pset.frame_start = 0
         pset.frame_end = 0
         pset.use_render_emitter = False
+        pset.physics_type = 'NO'
 
         return {'FINISHED'}
 

@@ -163,7 +163,7 @@ def particle_distribute(obj, particle_count, emit_from, scene):
 
     # Extract locations
     particles = psys.particles
-    locations = [particle.location for (index, particle) in particles.items()]
+    locations = [tuple(particle.location) for (index, particle) in particles.items()]
 
     # Delete particle system
     bpy.ops.object.particle_system_remove()
@@ -217,7 +217,6 @@ def weighted_particle_distribute(obj, particle_count, weight_group):
     # Randomly pick where in each face the particle is
     rand_u = np.random.uniform(size=particle_count)
     rand_v = np.random.uniform(size=particle_count)
-    rand_sum = rand_u + rand_v
 
     V = mathutils.Vector
     locations = []
@@ -242,7 +241,7 @@ def weighted_particle_distribute(obj, particle_count, weight_group):
             face.verts[2].co,
         )
         loc = obj.matrix_world * loc
-        locations.append(loc)
+        locations.append(tuple(loc))
         densities.append(face_densities[face_index])
 
 
@@ -318,7 +317,7 @@ class BlueNoiseParticles(bpy.types.Operator):
         se = SampleEliminator(locations, densities, self.count, is_volume, mesh_area)
         se.eliminate()
         alive_indices = se.get_indices()
-        alive_locations = [tuple(locations[i]) for i in alive_indices]
+        alive_locations = [locations[i] for i in alive_indices]
 
 
         # Create a new object, with vertices according the the alive locations

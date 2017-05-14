@@ -15,8 +15,10 @@ Cem Yuksel for the research and the clear statement of the method.
 
 Installation
 ------------
-Download the zip, then go to `File > User Preferences > Addons`, and search for the Blue Noise Particles addon, 
+Download the [zip][2], then go to `File > User Preferences > Addons`, and search for the Blue Noise Particles addon, 
 enabling it. 
+
+[2]: http://www.boristhebrave.com/content/2017/05/blue_noise_particles.zip
 
 Or you can simply copy the python files from this repository into your Blender Addon dir, then enable the addon. 
 

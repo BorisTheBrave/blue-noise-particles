@@ -309,8 +309,8 @@ class BlueNoiseParticles(bpy.types.Operator):
             locations, densities = particle_distribute(obj, initial_particle_count, self.emit_from, scene)
         else:
             if self.emit_from != "FACE":
-                self.report("Vertex group density only supported when emitting from faces", 'ERROR_INVALID_INPUT')
-                return {"FINISHED"}
+                self.report({'ERROR_INVALID_INPUT'}, "Vertex group density only supported when emitting from faces")
+                return {"CANCELLED"}
             locations, densities = weighted_particle_distribute(obj, initial_particle_count, self.vertex_group_density)
 
         # Run sample elimination

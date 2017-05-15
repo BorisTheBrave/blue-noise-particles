@@ -301,9 +301,7 @@ class BlueNoiseParticles(bpy.types.Operator):
         initial_particle_count = int(self.count * float(self.quality))
 
         is_volume = self.emit_from == 'VOLUME'
-        mesh_area = None
-        if not is_volume:
-            mesh_area = get_mesh_area(obj)
+        mesh_area = get_mesh_area(obj)
 
         if not self.vertex_group_density:
             locations, densities = particle_distribute(obj, initial_particle_count, self.emit_from, scene)

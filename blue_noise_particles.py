@@ -33,12 +33,18 @@ bl_info = {
     "wiki_url": "https://github.com/BorisTheBrave/blue-noise-particles/wiki",
     "category": "Add Mesh"}
 
+BLUE = 'BLUE'
+MAGENTA = 'MAGENTA'
+
 
 class SampleEliminator:
-    def __init__(self, locations, densities, target_samples, is_volume, mesh_area):
+    def __init__(self, locations, densities, target_samples, is_volume, mesh_area,
+                 noise_type, patchiness):
         self.locations = locations
+        self.noise_type = noise_type
+        self.patchiness = patchiness
 
-        # Setup a KD Tree of all lcations
+        # Setup a KD Tree of all locations
         self.tree = mathutils.kdtree.KDTree(len(locations))
         for index, location in enumerate(locations):
             self.tree.insert(location, index)
@@ -136,7 +142,12 @@ class SampleEliminator:
         # leading to poor quality results.
         d *= math.sqrt(self.densities[i])
         adj_d = min(d, 2 * self.rmax)
-        return (1 - adj_d / 2 / self.rmax) ** self.alpha
+        if self.noise_type == BLUE:
+            return (1 - adj_d / 2 / self.rmax) ** self.alpha
+        else:
+            if adj_d == 0:
+                return 1e10
+            return 2 * self.rmax / adj_d - self.patchiness
 
 
 def get_mesh_area(obj):
@@ -276,7 +287,20 @@ class BlueNoiseParticles(bpy.types.Operator):
                                   min=0)
 
     vertex_group_density = bpy.props.StringProperty(name="Density",
-                                      description="Vertex group to control density")
+                                                    description="Vertex group to control density")
+
+    noise_types = [(BLUE, "Even", "Spreads particles out with no two near each other"),
+                   (MAGENTA, "Patchy", "Clumps particles while still keeping a minimum distance")]
+    noise_type = bpy.props.EnumProperty(items=noise_types,
+                                     name="Noise Type",
+                                     description="Controls distribution of particles",
+                                     default=BLUE)
+
+    patchiness = bpy.props.FloatProperty(name="Patchiness",
+                                         description="Controls how strongly particles clump together",
+                                         default=3,
+                                         soft_min=0,
+                                         soft_max=10)
 
     @classmethod
     def poll(cls, context):
@@ -292,7 +316,14 @@ class BlueNoiseParticles(bpy.types.Operator):
         layout.prop(self, "quality")
         layout.prop(self, "count")
         obj = bpy.data.objects[self.obj_name]
-        layout.prop_search(self, "vertex_group_density", obj, "vertex_groups", text="Density")
+        if self.emit_from == "FACE":
+            layout.prop_search(self, "vertex_group_density", obj, "vertex_groups", text="Density")
+        layout.prop(self, "noise_type")
+        if self.noise_type == MAGENTA:
+            layout.prop(self, "patchiness")
+
+    def check(self, context):
+        return True
 
     def execute(self, context):
         obj = context.active_object  # type: bpy.types.Object
@@ -303,16 +334,13 @@ class BlueNoiseParticles(bpy.types.Operator):
         is_volume = self.emit_from == 'VOLUME'
         mesh_area = get_mesh_area(obj)
 
-        if not self.vertex_group_density:
+        if not self.vertex_group_density or self.emit_from != "FACE":
             locations, densities = particle_distribute(obj, initial_particle_count, self.emit_from, scene)
         else:
-            if self.emit_from != "FACE":
-                self.report({'ERROR_INVALID_INPUT'}, "Vertex group density only supported when emitting from faces")
-                return {"CANCELLED"}
             locations, densities = weighted_particle_distribute(obj, initial_particle_count, self.vertex_group_density)
 
         # Run sample elimination
-        se = SampleEliminator(locations, densities, self.count, is_volume, mesh_area)
+        se = SampleEliminator(locations, densities, self.count, is_volume, mesh_area, self.noise_type, self.patchiness)
         se.eliminate()
         alive_indices = se.get_indices()
         alive_locations = [locations[i] for i in alive_indices]

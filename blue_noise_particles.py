@@ -174,12 +174,13 @@ def particle_distribute(obj, particle_count, emit_from, scene):
 
     # Extract locations
     particles = psys.particles
-    locations = [tuple(particle.location) for (index, particle) in particles.items()]
+    locations = [mathutils.Vector(particle.location) for (index, particle) in particles.items()]
+    normals = [mathutils.Vector(particle.velocity) for (index, particle) in particles.items()]
 
     # Delete particle system
     bpy.ops.object.particle_system_remove()
 
-    return locations, None
+    return locations, normals, None
 
 V1 = mathutils.Vector([0, 0, 0])
 V2 = mathutils.Vector([0, 0, 1])
@@ -231,6 +232,7 @@ def weighted_particle_distribute(obj, particle_count, weight_group):
 
     V = mathutils.Vector
     locations = []
+    normals = []
     densities = []
     for i in range(particle_count):
         face_index = face_indices[i]
@@ -252,12 +254,35 @@ def weighted_particle_distribute(obj, particle_count, weight_group):
             face.verts[2].co,
         )
         loc = obj.matrix_world * loc
-        locations.append(tuple(loc))
+        locations.append(mathutils.Vector(loc))
+        normals.append(mathutils.Vector(face.normal))
         densities.append(face_densities[face_index])
 
 
     bm.free()
-    return locations, densities
+    return locations, normals, densities
+
+def set_face_cloud(me, locations, normals):
+    """Fills a mesh with tiny planes, one for each location/normals"""
+    up = mathutils.Vector([0, 1, 0])
+
+    def get_tangent(v):
+        t = up.cross(v)
+        if t.length_squared < 1e-12: t = mathutils.Vector([0, 0, 1])
+        return t * 1e-6
+
+    tangents = list(map(get_tangent, normals))
+    tangents2 = list(map(lambda a, b: a.cross(b), tangents, normals))
+
+    vertices = ([v + t for (v, t) in zip(locations, tangents2)] +
+                [v + t for (v, t) in zip(locations, tangents)] +
+                [v - t for (v, t) in zip(locations, tangents2)] +
+                [v - t for (v, t) in zip(locations, tangents)])
+
+    n = len(locations)
+    faces = [(i, i+n, i+2*n, i+3*n) for i in range(n)]
+
+    me.from_pydata(vertices, [] , faces)
 
 class BlueNoiseParticles(bpy.types.Operator):
     bl_idname = "object.blue_noise_particles_operator"
@@ -302,6 +327,13 @@ class BlueNoiseParticles(bpy.types.Operator):
                                          soft_min=0,
                                          soft_max=10)
 
+    generate_types = [("FACE", "Faces", ""),
+                      ("VERT", "Vertices", "")]
+    generate_type = bpy.props.EnumProperty(items=generate_types,
+                                     name="Generate",
+                                     description="Use faces or vertices for each particle",
+                                     default="FACE")
+
     @classmethod
     def poll(cls, context):
         ob = context.active_object
@@ -321,6 +353,7 @@ class BlueNoiseParticles(bpy.types.Operator):
         layout.prop(self, "noise_type")
         if self.noise_type == MAGENTA:
             layout.prop(self, "patchiness")
+        layout.prop(self, "generate_type")
 
     def check(self, context):
         return True
@@ -335,21 +368,31 @@ class BlueNoiseParticles(bpy.types.Operator):
         mesh_area = get_mesh_area(obj)
 
         if not self.vertex_group_density or self.emit_from != "FACE":
-            locations, densities = particle_distribute(obj, initial_particle_count, self.emit_from, scene)
+            locations, normals, densities = particle_distribute(obj, initial_particle_count, self.emit_from, scene)
         else:
-            locations, densities = weighted_particle_distribute(obj, initial_particle_count, self.vertex_group_density)
+            locations, normals, densities = weighted_particle_distribute(obj, initial_particle_count, self.vertex_group_density)
 
         # Run sample elimination
         se = SampleEliminator(locations, densities, self.count, is_volume, mesh_area, self.noise_type, self.patchiness)
         se.eliminate()
         alive_indices = se.get_indices()
         alive_locations = [locations[i] for i in alive_indices]
+        alive_normals = [normals[i] for i in alive_indices]
 
 
         # Create a new object, with vertices according the the alive locations
         me = bpy.data.meshes.new(obj.name + " ParticleMesh")
         ob = bpy.data.objects.new(obj.name + " Particles", me)
-        me.from_pydata(alive_locations, [], [])
+        # Sigh, it doesn't seem possible to create vertices with custom normals, nor does the particle system respect it
+        if self.generate_type == "FACE":
+            #me.from_pydata(alive_locations, [], [])
+            #me.vertices.foreach_set("normal", [v for n in alive_normals for v in n])
+            #me.normals_split_custom_set_from_vertices(alive_normals)
+            # So instead we create a mesh with lots of tiny faces
+            set_face_cloud(me, alive_locations, alive_normals)
+        else:
+            me.from_pydata(alive_locations, [], [])
+
         scene.objects.link(ob)
         me.update()
 
@@ -363,7 +406,7 @@ class BlueNoiseParticles(bpy.types.Operator):
         psys = ob.particle_systems[-1]  # type: bpy.types.ParticleSystem
         pset = psys.settings
         pset.count = self.count
-        pset.emit_from = 'VERT'
+        pset.emit_from = self.generate_type
         pset.use_emit_random = False
         pset.frame_start = 0
         pset.frame_end = 0

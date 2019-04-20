@@ -27,7 +27,7 @@ bl_info = {
     "description": "",
     "author": "Adam Newgas",
     "version": (0, 0, 1),
-    "blender": (2, 78, 0),
+    "blender": (2, 80, 0),
     "location": "View3D > Add > Mesh > Blue Noise Particles",
     "warning": "",
     "wiki_url": "https://github.com/BorisTheBrave/blue-noise-particles/wiki",
@@ -171,9 +171,11 @@ def particle_distribute(obj, particle_count, emit_from, scene):
 
     # Force a scene update (generates particle loations)
     scene.update()
+	# Force depsgraph evaluation (https://developer.blender.org/T58792)
+    eval_obj = bpy.context.depsgraph.objects.get(obj.name, None)
 
     # Extract locations
-    particles = psys.particles
+    particles = eval_obj.particle_systems[-1].particles
     locations = [mathutils.Vector(particle.location) for (index, particle) in particles.items()]
     normals = [mathutils.Vector(particle.velocity) for (index, particle) in particles.items()]
 
@@ -213,8 +215,6 @@ def weighted_particle_distribute(obj, particle_count, weight_group):
     for face in bm.faces:
         w = np.mean([v[layer].get(group_index, 0) for v in face.verts])
         face_densities[face.index] = w
-    print(face_densities)
-    print(areas)
     areas *= face_densities
 
 
@@ -253,7 +253,7 @@ def weighted_particle_distribute(obj, particle_count, weight_group):
             face.verts[1].co,
             face.verts[2].co,
         )
-        loc = obj.matrix_world * loc
+        loc = obj.matrix_world @ loc
         locations.append(mathutils.Vector(loc))
         normals.append(mathutils.Vector(face.normal))
         densities.append(face_densities[face_index])
@@ -269,7 +269,8 @@ def set_face_cloud(me, locations, normals):
     def get_tangent(v):
         t = up.cross(v)
         if t.length_squared < 1e-12: t = mathutils.Vector([0, 0, 1])
-        return t * 1e-6
+        # Need to make these reasonably large or they are invisible in the blender UI
+        return t * 1e-2
 
     tangents = list(map(get_tangent, normals))
     tangents2 = list(map(lambda a, b: a.cross(b), tangents, normals))
@@ -292,7 +293,7 @@ class BlueNoiseParticles(bpy.types.Operator):
     emit_from_types = [("VERT", "Verts", "Emit from vertices"),
                        ("FACE", "Faces", "Emit from faces"),
                        ("VOLUME", "Volume", "Emit from volume")]
-    emit_from = bpy.props.EnumProperty(items=emit_from_types,
+    emit_from: bpy.props.EnumProperty(items=emit_from_types,
                                        name="Emit From",
                                        description="Controls where particles are generated",
                                        default="FACE")
@@ -301,27 +302,27 @@ class BlueNoiseParticles(bpy.types.Operator):
                      ("1.5", "Low", ""),
                      ("2", "Medium", ""),
                      ("5", "High", "")]
-    quality = bpy.props.EnumProperty(items=quality_types,
+    quality: bpy.props.EnumProperty(items=quality_types,
                                      name="Quality",
                                      description="Controls how much oversampling is done",
                                      default="2")
 
-    count = bpy.props.IntProperty(name="Count",
+    count: bpy.props.IntProperty(name="Count",
                                   description="Number of particles to emit",
                                   default=1000,
                                   min=0)
 
-    vertex_group_density = bpy.props.StringProperty(name="Density",
+    vertex_group_density: bpy.props.StringProperty(name="Density",
                                                     description="Vertex group to control density")
 
     noise_types = [(BLUE, "Even", "Spreads particles out with no two near each other"),
                    (MAGENTA, "Patchy", "Clumps particles while still keeping a minimum distance")]
-    noise_type = bpy.props.EnumProperty(items=noise_types,
+    noise_type: bpy.props.EnumProperty(items=noise_types,
                                      name="Noise Type",
                                      description="Controls distribution of particles",
                                      default=BLUE)
 
-    patchiness = bpy.props.FloatProperty(name="Patchiness",
+    patchiness: bpy.props.FloatProperty(name="Patchiness",
                                          description="Controls how strongly particles clump together",
                                          default=3,
                                          soft_min=0,
@@ -329,7 +330,7 @@ class BlueNoiseParticles(bpy.types.Operator):
 
     generate_types = [("FACE", "Faces", ""),
                       ("VERT", "Vertices", "")]
-    generate_type = bpy.props.EnumProperty(items=generate_types,
+    generate_type: bpy.props.EnumProperty(items=generate_types,
                                      name="Generate",
                                      description="Use faces or vertices for each particle",
                                      default="FACE")
@@ -393,13 +394,13 @@ class BlueNoiseParticles(bpy.types.Operator):
         else:
             me.from_pydata(alive_locations, [], [])
 
-        scene.objects.link(ob)
+        scene.collection.objects.link(ob)
         me.update()
 
         # Select new object
-        scene.objects.active = ob
-        obj.select = False
-        ob.select = True
+        context.view_layer.objects.active = ob
+        obj.select_set(False)
+        ob.select_set(True)
 
         # Add a particle system to the new object
         bpy.ops.object.particle_system_add()
@@ -410,7 +411,6 @@ class BlueNoiseParticles(bpy.types.Operator):
         pset.use_emit_random = False
         pset.frame_start = 0
         pset.frame_end = 0
-        pset.use_render_emitter = False
         pset.physics_type = 'NO'
 
         return {'FINISHED'}
@@ -426,13 +426,13 @@ def menu_func(self, context):
 
 
 def register():
-    bpy.utils.register_module(__name__)
-    bpy.types.INFO_MT_mesh_add.append(menu_func)
+    bpy.utils.register_class(BlueNoiseParticles)
+    bpy.types.VIEW3D_MT_mesh_add.append(menu_func)
 
 
 def unregister():
-    bpy.types.INFO_MT_mesh_add.remove(menu_func)
-    bpy.utils.unregister_module(__name__)
+    bpy.types.VIEW3D_MT_mesh_add.remove(menu_func)
+    bpy.utils.unregister_class(BlueNoiseParticles)
 
 if __name__ == "__main__":
     register()

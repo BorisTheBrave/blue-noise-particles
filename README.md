@@ -15,8 +15,8 @@ Cem Yuksel for the research and the clear statement of the method.
 
 Installation
 ------------
-Download the [zip][2], then go to `File > User Preferences > Addons`, and search for the Blue Noise Particles addon, 
-enabling it. 
+Download the [zip][2], then go to `Edit > Preferences > Addons`.
+Select install from file and pick the zip. Then tick the checkbox to enable the addon.
 
 [2]: https://github.com/BorisTheBrave/blue-noise-particles/releases
 

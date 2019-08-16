@@ -26,7 +26,7 @@ bl_info = {
     "name": "Blue Noise Particles",
     "description": "",
     "author": "Adam Newgas",
-    "version": (1, 0, 0),
+    "version": (1, 0, 1),
     "blender": (2, 80, 0),
     "location": "View3D > Add > Mesh > Blue Noise Particles",
     "warning": "",

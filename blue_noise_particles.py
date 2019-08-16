@@ -169,10 +169,15 @@ def particle_distribute(obj, particle_count, emit_from, scene):
     pset.distribution = 'RAND'
     pset.use_even_distribution = True
 
-    # Force a scene update (generates particle loations)
-    scene.update()
+    # Force a scene update (generates particle locations)
+    bpy.context.view_layer.update()
+
 	# Force depsgraph evaluation (https://developer.blender.org/T58792)
-    eval_obj = bpy.context.depsgraph.objects.get(obj.name, None)
+    eval_obj = bpy.context.evaluated_depsgraph_get()
+
+    dp = bpy.context.evaluated_depsgraph_get()
+    ob = bpy.context.active_object
+    eval_obj = dp.objects.get(ob.name, None)
 
     # Extract locations
     particles = eval_obj.particle_systems[-1].particles
@@ -361,7 +366,7 @@ class BlueNoiseParticles(bpy.types.Operator):
 
     def execute(self, context):
         obj = context.active_object  # type: bpy.types.Object
-        scene = context.scene
+        scene = bpy.context.scene
 
         initial_particle_count = int(self.count * float(self.quality))
 

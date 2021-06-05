@@ -1,6 +1,8 @@
 Blue Noise Particles
 =====================
 
+**Important: Since Blender 2.92, the majority of functionality in the plugin is better achieved with the [Point Distribute Geometry Node][2] in Poisson Disk mode.**
+
 This Blender plugin generates a random arrangement of particles with a blue noise distribution. 
 This is also known as Poisson Disk Sampling.
 
@@ -12,6 +14,8 @@ The particular method of noise generation is called [Sample Elimination for Pois
 Cem Yuksel for the research and the clear statement of the method.
   
 [1]: http://www.cemyuksel.com/research/sampleelimination/
+
+[2]: https://docs.blender.org/manual/en/latest/modeling/geometry_nodes/point/point_distribute.html
 
 Installation
 ------------
